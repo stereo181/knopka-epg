@@ -1,0 +1,40 @@
+name: EPG
+on:
+  schedule:
+    - cron: '20 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build per-channel JSON
+        run: |
+          python3 build.py out https://raw.githubusercontent.com/Lorax121/epg_v2/main/data/EPG_LITE.xml.gz \
+            || python3 build.py out https://iptvx.one/epg/epg.xml.gz
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+      # без коммитов GitHub через 60 дней выключает расписание — отмечаем последний запуск
+      - name: Keep schedule alive
+        run: |
+          date -u +%FT%TZ > last-run.txt
+          git config user.name "knopka-epg-bot"
+          git config user.email "knopka-epg-bot@users.noreply.github.com"
+          git add last-run.txt && git commit -q -m "EPG updated" && git push -q || true
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.d.outputs.page_url }}
+    steps:
+      - id: d
+        uses: actions/deploy-pages@v4

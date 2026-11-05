@@ -66,6 +66,8 @@ def main(out, srcs):
     os.makedirs(os.path.join(out, 'epg'))
     index, total = [], 0
     for cid, rows in progs.items():
+        if re.match(r'no_?epg', cid, re.I):
+            continue   # заглушки «нет программы» (no_epg, no_epg_sport…): у сотен каналов одна и та же чужая программа
         lst = [rows[k] for k in sorted(rows)]
         fn = safe(cid)
         with open(os.path.join(out, 'epg', fn + '.json'), 'w', encoding='utf-8') as f:

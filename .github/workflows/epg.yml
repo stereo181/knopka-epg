@@ -17,8 +17,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build per-channel JSON
         run: |
-          python3 build.py out https://raw.githubusercontent.com/Lorax121/epg_v2/main/data/EPG_LITE.xml.gz \
-            || python3 build.py out https://iptvx.one/epg/epg.xml.gz
+          # главный — полный iptvx.one (с описаниями; его id = tvg-id плейлистов), без него — облегчённая копия без описаний
+          curl -fsSL --retry 3 -m 900 -o iptvx.xml.gz https://iptvx.one/epg/epg.xml.gz             || curl -fsSL --retry 3 -m 900 -o iptvx.xml.gz https://raw.githubusercontent.com/Lorax121/epg_v2/main/data/EPG_LITE.xml.gz
+          # дополнительные: каналы, которых нет у iptvx (совпадение по названию) — RU/UA/спорт, Великобритания, Польша
+          python3 build.py out iptvx.xml.gz             https://raw.githubusercontent.com/Lorax121/epg_v2/main/data/epg.xml.gz             https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz             https://epgshare01.online/epgshare01/epg_ripper_PL1.xml.gz
+          du -sh out
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out

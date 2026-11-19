@@ -1,26 +1,31 @@
-"""Knopka EPG: большой XMLTV -> маленькие JSON по каналам (для телевизоров LG/Samsung и MSX).
+"""Knopka EPG: большие XMLTV -> маленькие JSON по каналам (для телевизоров LG/Samsung и MSX).
 
-Вход: один или несколько XMLTV (.xml / .xml.gz), по ссылке или файлу.
+Вход: один или несколько XMLTV (.xml / .xml.gz), по ссылке или файлу. Первый — главный (его id совпадают
+с tvg-id плейлистов вида iptvx.one); у следующих id, уже занятые предыдущими, получают приставку «<n>~».
 Выход (папка out/):
-  index.json           — {"src": "...", "at": unix, "ch": [[название, id], ...]}  (только каналы, у которых есть программа)
-  epg/<id>.json        — {"epg_data": [{"name", "time", "time_to", "descr"?}, ...]}  (тот же формат, что у epg.ott-play.com)
-Окно: 3 дня назад … 7 дней вперёд.
+  index.json           — {"at": unix, "ch": [[название, id], ...]}  (только каналы, у которых есть программа;
+                         каналы с описаниями идут раньше — при одинаковом названии приложение берёт первый)
+  epg/<id>.json        — {"epg_data": [{"name", "time", "time_to", "descr"?, "img"?}, ...]}  (формат epg.ott-play.com)
+Окно: 2 дня назад … 4 дня вперёд. Описание: жанр · текст, до 400 знаков.
 """
-import gzip, io, json, os, re, shutil, sys, time, urllib.request
+import gzip, json, os, re, shutil, sys, tempfile, time, urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
-BACK, FWD = 3 * 86400, 7 * 86400
+BACK, FWD = 2 * 86400, 4 * 86400 + 6 * 3600   # приложение держит 4 дня вперёд; +6 ч — до следующей сборки
 
 def open_src(src):
+    """Поток XML. Ссылку сначала скачиваем во временный файл: распакованный XMLTV в память не кладём."""
+    path = src
     if re.match(r'https?://', src):
         req = urllib.request.Request(src, headers={'User-Agent': 'Mozilla/5.0 (KnopkaEPG)'})
-        data = urllib.request.urlopen(req, timeout=300).read()
-    else:
-        data = open(src, 'rb').read()
-    if data[:2] == b'\x1f\x8b':
-        data = gzip.decompress(data)
-    return io.BytesIO(data)
+        fd, path = tempfile.mkstemp(suffix='.xmltv')
+        with os.fdopen(fd, 'wb') as f, urllib.request.urlopen(req, timeout=600) as r:
+            shutil.copyfileobj(r, f, 1 << 20)
+    f = open(path, 'rb')
+    gz = f.read(2) == b'\x1f\x8b'
+    f.seek(0)
+    return gzip.GzipFile(fileobj=f) if gz else f
 
 def ts(s):
     s = s.strip()
@@ -39,46 +44,71 @@ def safe(id_):
 
 def main(out, srcs):
     now = int(time.time())
-    names, progs = {}, {}
-    for src in srcs:
-        for ev, el in ET.iterparse(open_src(src), events=('end',)):
-            if el.tag == 'channel':
-                cid = el.get('id')
-                for dn in el.findall('display-name'):
-                    if dn.text and cid:
-                        names.setdefault(cid, [])
-                        if dn.text.strip() not in names[cid]:
-                            names[cid].append(dn.text.strip())
-                el.clear()
-            elif el.tag == 'programme':
-                cid, s, e = el.get('channel'), ts(el.get('start', '')), ts(el.get('stop', ''))
-                if cid and s and e and e > now - BACK and s < now + FWD:
-                    t = el.findtext('title') or ''
-                    d = el.findtext('desc') or ''
-                    t = re.sub(r'\s*┊\s*', ' · ', t.replace('⋗', '')).strip()   # служебные значки iptvx.one
-                    row = {'name': t, 'time': s, 'time_to': e}
-                    if d.strip():
-                        row['descr'] = d.strip()[:600]
-                    progs.setdefault(cid, {})[s] = row   # тот же старт из второго источника не дублируем
-                el.clear()
+    names, progs, owner = {}, {}, {}   # owner: id -> номер источника
+    for si, src in enumerate(srcs):
+        mine = {}   # id в этом источнике -> id в выдаче
+        def oid(cid):
+            if cid not in mine:
+                mine[cid] = cid if owner.get(cid, si) == si else '%d~%s' % (si, cid)
+                owner.setdefault(mine[cid], si)
+            return mine[cid]
+        try:
+            stream = open_src(src)
+            n0 = len(progs)
+            for ev, el in ET.iterparse(stream, events=('end',)):
+                if el.tag == 'channel':
+                    cid = el.get('id')
+                    if cid:
+                        lst = names.setdefault(oid(cid), [])
+                        for dn in el.findall('display-name'):
+                            if dn.text and dn.text.strip() not in lst:
+                                lst.append(dn.text.strip())
+                    el.clear()
+                elif el.tag == 'programme':
+                    cid, s, e = el.get('channel'), ts(el.get('start', '')), ts(el.get('stop', ''))
+                    if cid and s and e and e > now - BACK and s < now + FWD:
+                        t = el.findtext('title') or ''
+                        d = (el.findtext('desc') or '').strip()
+                        cat = [c.text.strip() for c in el.findall('category') if c.text and c.text.strip()]
+                        t = re.sub(r'\s*┊\s*', ' · ', t.replace('⋗', '')).strip()   # служебные значки iptvx.one
+                        row = {'name': t, 'time': s, 'time_to': e}
+                        if cat and d and cat[0].lower() not in d[:80].lower():
+                            d = ', '.join(cat[:2]) + ' · ' + d
+                        if d:
+                            row['descr'] = (d[:399] + "…" if len(d) > 400 else d)
+                        ic = el.find('icon')
+                        if ic is not None and re.match(r'https?://', ic.get('src') or ''):
+                            row['img'] = ic.get('src')
+                        rows = progs.setdefault(oid(cid), {})
+                        if s not in rows:   # тот же старт из другого источника не дублируем
+                            rows[s] = row
+                    el.clear()
+            print('source', si, re.sub(r'\?.*', '', src), 'channels +%d' % (len(progs) - n0))
+        except Exception as ex:   # один источник упал — остальные всё равно выкладываем
+            print('source', si, 'FAILED', ex)
+    if not progs:
+        sys.exit('no programmes')
     if os.path.isdir(out):
         shutil.rmtree(out)
     os.makedirs(os.path.join(out, 'epg'))
-    index, total = [], 0
+    chans, total = [], 0
     for cid, rows in progs.items():
-        if re.match(r'no_?epg', cid, re.I):
+        if re.match(r'(\d+~)?no_?epg', cid, re.I):
             continue   # заглушки «нет программы» (no_epg, no_epg_sport…): у сотен каналов одна и та же чужая программа
         lst = [rows[k] for k in sorted(rows)]
         fn = safe(cid)
         with open(os.path.join(out, 'epg', fn + '.json'), 'w', encoding='utf-8') as f:
             json.dump({'epg_data': lst}, f, ensure_ascii=False, separators=(',', ':'))
-        for n in names.get(cid, [cid]):
-            index.append([n, fn])
+        q = sum(1 for r in lst if 'descr' in r) / len(lst)
+        chans.append((owner.get(cid, 0) > 0, -round(q, 1), fn, names.get(cid) or [cid]))
         total += len(lst)
+    # при одинаковом названии побеждает первый в списке: у кого больше описаний, при равенстве — главный источник
+    chans.sort(key=lambda c: (c[1], c[0]))
+    index = [[n, fn] for _, _, fn, ns in chans for n in ns]
     with open(os.path.join(out, 'index.json'), 'w', encoding='utf-8') as f:
         json.dump({'at': now, 'ch': index}, f, ensure_ascii=False, separators=(',', ':'))
     open(os.path.join(out, '.nojekyll'), 'w').close()
-    print('channels', len(progs), 'programmes', total)
+    print('channels', len(chans), 'programmes', total)
 
 if __name__ == '__main__':
     main(sys.argv[1], sys.argv[2:])

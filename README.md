@@ -5,9 +5,15 @@
 Большой XMLTV-файл телевизору не по силам, поэтому GitHub каждые 6 часов раскладывает его на маленькие файлы по каналам:
 
 - `index.json` — список каналов: `{"at": время, "ch": [[название, id], ...]}`
-- `epg/<id>.json` — программа канала: `{"epg_data": [{"name", "time", "time_to", "descr"?}, ...]}` (формат как у epg.ott-play.com)
+- `epg/<id>.json` — программа канала: `{"epg_data": [{"name", "time", "time_to", "descr"?, "img"?}, ...]}` (формат как у epg.ott-play.com; `descr` — «жанр · описание», до 400 знаков; `img` — картинка передачи, если есть)
 
-Окно: 3 дня назад и 7 дней вперёд. Адрес: https://stereo181.github.io/knopka-epg/
+Окно: 2 дня назад и 4 дня вперёд. Адрес: https://stereo181.github.io/knopka-epg/
 
-Источник: публичное зеркало [Lorax121/epg_v2](https://github.com/Lorax121/epg_v2) (iptvx.one), запасной — iptvx.one напрямую.
-Собрать вручную: `python3 build.py out <xmltv.xml.gz>`
+Источники (по порядку):
+1. iptvx.one — полный `epg.xml.gz` с описаниями (id совпадают с tvg-id плейлистов); если недоступен — облегчённая копия `EPG_LITE` из [Lorax121/epg_v2](https://github.com/Lorax121/epg_v2) без описаний.
+2. [Lorax121/epg_v2](https://github.com/Lorax121/epg_v2) `epg.xml.gz` — другие RU/UA/спортивные каналы.
+3. [epgshare01](https://epgshare01.online) UK1 и PL1 — английские и польские каналы с описаниями и картинками.
+
+Id дополнительных источников, уже занятые предыдущими, получают приставку `<n>~`. В `index.json` каналы с описаниями идут раньше: при одинаковом названии приложение берёт первый.
+
+Собрать вручную: `python3 build.py out <главный.xml.gz> [доп.xml.gz …]`

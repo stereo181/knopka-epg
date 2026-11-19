@@ -2,6 +2,11 @@
 
 Вход: один или несколько XMLTV (.xml / .xml.gz), по ссылке или файлу. Первый — главный (его id совпадают
 с tvg-id плейлистов вида iptvx.one); у следующих id, уже занятые предыдущими, получают приставку «<n>~».
+Источник с «=» впереди (=ссылка) — с теми же id, что у главного (например, программа провайдера на базе iptvx):
+его каналы не получают приставку, а заменяют канал главного, если программа у них полнее.
+Метка источника: «метка@ссылка» (например, uk@https://…) — на неё ссылается aliases.txt.
+--aliases файл: свои соответствия «id:<tvg-id> = метка:<id>» (копия программы под tvg-id плейлиста)
+и «name:<название> = метка:<id>» (лишнее название в index.json) — для каналов, которые в источниках названы иначе.
 Выход (папка out/):
   index.json           — {"at": unix, "ch": [[название, id], ...]}  (только каналы, у которых есть программа;
                          каналы с описаниями идут раньше — при одинаковом названии приложение берёт первый)
@@ -42,19 +47,33 @@ def safe(id_):
     # имя файла: id как есть, только без / \ и управляющих символов
     return re.sub(r'[\\/\x00-\x1f?#%]', '_', id_)
 
-def main(out, srcs):
+def main(out, srcs, aliases=None):
     now = int(time.time())
     names, progs, owner = {}, {}, {}   # owner: id -> номер источника
+    byTag = {}   # метка -> {id в источнике: id в выдаче}
+    alts = []   # каналы источников «=»: [{id: {start: row}}]
     for si, src in enumerate(srcs):
         mine = {}   # id в этом источнике -> id в выдаче
+        same = src.startswith('=')
+        src = src.lstrip('=')
+        m = re.match(r'^(\w+)@(.+)$', src)
+        tag, src = (m.group(1), m.group(2)) if m else ('', src)
+        alt = {}
+        if tag:
+            byTag[tag] = mine
+        if same:
+            alts.append(alt)
         def oid(cid):
+            if same:
+                mine[cid] = cid
+                return cid
             if cid not in mine:
                 mine[cid] = cid if owner.get(cid, si) == si else '%d~%s' % (si, cid)
                 owner.setdefault(mine[cid], si)
             return mine[cid]
         try:
             stream = open_src(src)
-            n0 = len(progs)
+            n0 = len(progs) + len(alt)
             for ev, el in ET.iterparse(stream, events=('end',)):
                 if el.tag == 'channel':
                     cid = el.get('id')
@@ -79,15 +98,37 @@ def main(out, srcs):
                         ic = el.find('icon')
                         if ic is not None and re.match(r'https?://', ic.get('src') or ''):
                             row['img'] = ic.get('src')
-                        rows = progs.setdefault(oid(cid), {})
+                        rows = (alt if same else progs).setdefault(oid(cid), {})
                         if s not in rows:   # тот же старт из другого источника не дублируем
                             rows[s] = row
                     el.clear()
-            print('source', si, re.sub(r'\?.*', '', src), 'channels +%d' % (len(progs) - n0))
+            print('source', si, re.sub(r'\?.*', '', src), 'channels +%d' % (len(progs) + len(alt) - n0))
         except Exception as ex:   # один источник упал — остальные всё равно выкладываем
             print('source', si, 'FAILED', ex)
+    def score(rows):   # сколько из ближайших суток покрыто программой, затем — сколько передач с описанием
+        cov = sum(max(0, min(r['time_to'], now + 86400) - max(r['time'], now)) for r in rows.values())
+        return (min(cov, 86400) // 3600, sum(1 for r in rows.values() if 'descr' in r))
+    for alt in alts:
+        for cid, rows in alt.items():
+            if cid not in progs or score(rows) > score(progs[cid]):
+                progs[cid] = rows
+                owner[cid] = 0
     if not progs:
         sys.exit('no programmes')
+    extra, na = [], 0   # свои соответствия
+    for line in open(aliases, encoding='utf-8') if aliases else []:
+        m = re.match(r'^(id|name):(.+?)\s+=\s+(\w+):(.+)$', line.strip())
+        if not m:
+            continue
+        kind, alias, tag, sid = m.groups()
+        cid = byTag.get(tag, {}).get(sid)
+        if not cid or cid not in progs or alias == cid:
+            continue
+        if kind == 'name':
+            extra.append([alias, safe(cid)]); na += 1
+        elif alias not in progs or score(progs[alias])[0] < score(progs[cid])[0]:
+            progs[alias] = progs[cid]; names.setdefault(alias, []); owner[alias] = 0; na += 1
+    print('aliases', na)
     if os.path.isdir(out):
         shutil.rmtree(out)
     os.makedirs(os.path.join(out, 'epg'))
@@ -104,11 +145,15 @@ def main(out, srcs):
         total += len(lst)
     # при одинаковом названии побеждает первый в списке: у кого больше описаний, при равенстве — главный источник
     chans.sort(key=lambda c: (c[1], c[0]))
-    index = [[n, fn] for _, _, fn, ns in chans for n in ns]
+    index = extra + [[n, fn] for _, _, fn, ns in chans for n in ns]
     with open(os.path.join(out, 'index.json'), 'w', encoding='utf-8') as f:
         json.dump({'at': now, 'ch': index}, f, ensure_ascii=False, separators=(',', ':'))
     open(os.path.join(out, '.nojekyll'), 'w').close()
     print('channels', len(chans), 'programmes', total)
 
 if __name__ == '__main__':
-    main(sys.argv[1], sys.argv[2:])
+    a = sys.argv[1:]
+    al = None
+    if '--aliases' in a:
+        i = a.index('--aliases'); al = a[i + 1]; del a[i:i + 2]
+    main(a[0], a[1:], al)

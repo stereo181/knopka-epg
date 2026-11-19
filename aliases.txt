@@ -79,3 +79,7 @@ id:cbbc.uk = uk:CBBC.HD.uk
 id:crimeandinvestigationnetwork.uk = uk:Crime+Inv.HD.uk
 id:discoveryhistory.uk = uk:Disc.History.uk
 id:skygreats.uk = uk:Sky.Greats.HD.uk
+name:BBC Cbeebies HD [UK] = iptvx:cbeebies-uk
+name:24 Kitchen [NL] = nl:24Kitchen.nl
+name:Star Channel [NL] = nl:STAR.Channel.nl
+name:SyFy HD [DE] = de:SyFy.de

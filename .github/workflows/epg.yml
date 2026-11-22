@@ -20,9 +20,9 @@ jobs:
           # главный — полный iptvx.one (с описаниями; его id = tvg-id плейлистов), без него — облегчённая копия без описаний
           curl -fsSL --retry 3 -m 900 -o iptvx.xml.gz https://iptvx.one/epg/epg.xml.gz || curl -fsSL --retry 3 -m 900 -o iptvx.xml.gz https://raw.githubusercontent.com/Lorax121/epg_v2/main/data/EPG_LITE.xml.gz
           # only4 (1lot.tv) — те же id, что у iptvx: заменяет канал, если программа полнее («=»);
-          # остальные — каналы, которых нет у iptvx (по названию и aliases.txt): RU/UA/спорт, UK, PL, DE, NL
+          # остальные — каналы, которых нет у iptvx (по названию и aliases.txt): RU/UA/спорт, UK, PL, DE, NL, TapTV (+ значки каналов в logos.json)
           S=https://epgshare01.online/epgshare01
-          python3 build.py out iptvx@iptvx.xml.gz =only4@http://1lot.tv/epg/epg.xml lorax@https://raw.githubusercontent.com/Lorax121/epg_v2/main/data/epg.xml.gz uk@$S/epg_ripper_UK1.xml.gz pl@$S/epg_ripper_PL1.xml.gz de@$S/epg_ripper_DE1.xml.gz nl@$S/epg_ripper_NL1.xml.gz --aliases aliases.txt
+          python3 build.py out iptvx@iptvx.xml.gz =only4@http://1lot.tv/epg/epg.xml lorax@https://raw.githubusercontent.com/Lorax121/epg_v2/main/data/epg.xml.gz uk@$S/epg_ripper_UK1.xml.gz pl@$S/epg_ripper_PL1.xml.gz de@$S/epg_ripper_DE1.xml.gz nl@$S/epg_ripper_NL1.xml.gz taptv@http://taptv.space/epg.xml.gz --aliases aliases.txt
           du -sh out
       - uses: actions/upload-pages-artifact@v3
         with:

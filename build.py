@@ -50,6 +50,7 @@ def safe(id_):
 def main(out, srcs, aliases=None):
     now = int(time.time())
     names, progs, owner = {}, {}, {}   # owner: id -> номер источника
+    icons = {}   # id -> логотип канала из источника (<icon> у <channel>): у плейлистов без tvg-logo (TapTV) значки берутся отсюда
     byTag = {}   # метка -> {id в источнике: id в выдаче}
     alts = []   # каналы источников «=»: [{id: {start: row}}]
     for si, src in enumerate(srcs):
@@ -78,6 +79,9 @@ def main(out, srcs, aliases=None):
                 if el.tag == 'channel':
                     cid = el.get('id')
                     if cid:
+                        ic = el.find('icon')
+                        if ic is not None and re.match(r'https?://', ic.get('src') or ''):
+                            icons.setdefault(oid(cid), ic.get('src'))
                         lst = names.setdefault(oid(cid), [])
                         for dn in el.findall('display-name'):
                             if dn.text and dn.text.strip() not in lst:
@@ -132,12 +136,14 @@ def main(out, srcs, aliases=None):
     if os.path.isdir(out):
         shutil.rmtree(out)
     os.makedirs(os.path.join(out, 'epg'))
-    chans, total = [], 0
+    chans, total, logos = [], 0, {}
     for cid, rows in progs.items():
         if re.match(r'(\d+~)?no_?epg', cid, re.I):
             continue   # заглушки «нет программы» (no_epg, no_epg_sport…): у сотен каналов одна и та же чужая программа
         lst = [rows[k] for k in sorted(rows)]
         fn = safe(cid)
+        if cid in icons:
+            logos[fn] = icons[cid]
         with open(os.path.join(out, 'epg', fn + '.json'), 'w', encoding='utf-8') as f:
             json.dump({'epg_data': lst}, f, ensure_ascii=False, separators=(',', ':'))
         q = sum(1 for r in lst if 'descr' in r) / len(lst)
@@ -148,6 +154,8 @@ def main(out, srcs, aliases=None):
     index = extra + [[n, fn] for _, _, fn, ns in chans for n in ns]
     with open(os.path.join(out, 'index.json'), 'w', encoding='utf-8') as f:
         json.dump({'at': now, 'ch': index}, f, ensure_ascii=False, separators=(',', ':'))
+    with open(os.path.join(out, 'logos.json'), 'w', encoding='utf-8') as f:   # id -> логотип канала
+        json.dump(logos, f, ensure_ascii=False, separators=(',', ':'))
     open(os.path.join(out, '.nojekyll'), 'w').close()
     print('channels', len(chans), 'programmes', total)
 
